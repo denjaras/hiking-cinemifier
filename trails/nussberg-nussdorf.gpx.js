@@ -6,8 +6,8 @@ window.TRAIL_DATA.push({
   "name": "Nussberg → Wien Nußdorf",
   "description": "A scenic downhill walk from the Nussberg vineyards above Vienna down to Nußdorf by the Danube. Gentle, mostly paved, with great views over the city and the wine hills. Great for an easy afternoon stroll.",
   "pois": [
-    //{ "lat": 48.2651600, "lng": 16.3615258, "name": "Scenic vista", "audio": "audio/01. Lion King - This Land.mp3" },
-    { "lat": 48.18250, "lng": 16.36310, "name": "Location Test", "audio": "audio/01. Lion King - This Land.mp3" },
+    { "lat": 48.2651600, "lng": 16.3615258, "name": "Scenic vista", "audio": "audio/01. Lion King - This Land.mp3" },
+    //{ "lat": 48.18250, "lng": 16.36310, "name": "Location Test", "audio": "audio/01. Lion King - This Land.mp3" },
     { "lat": 48.2678267, "lng": 16.3475261, "name": "Wine bar", "audio": "audio/01. Lion King - This Land.mp3" },
     { "lat": 48.2615331, "lng": 16.3656633, "name": "Town architecture","audio": "audio/01. Lion King - This Land.mp3" },
     { "lat": 48.2649164, "lng": 16.3643214, "name": "Scenic vista", "audio": "audio/01. Lion King - This Land.mp3" }
