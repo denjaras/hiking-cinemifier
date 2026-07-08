@@ -27,21 +27,25 @@ body {
   color: #1b2a3d;
 }
 
-/* One unified card holding the panel and the map. */
+/* One unified card holding the map and the tracking panel, stacked
+   vertically so it fits comfortably on a phone screen. */
 #layout {
   display: flex;
+  flex-direction: column;
   align-items: stretch;
-  width: min(1100px, 95vw);
-  height: 50vh;
+  width: min(480px, 95vw);
+  height: auto;
   background: #fff;
   border-radius: 14px;
   overflow: hidden;
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.15);
 }
 
+/* Map sits on top. */
 #mapWrap {
   position: relative;
-  flex: 1;
+  order: 0;
+  height: 55vh;
 }
 
 #map {
@@ -50,30 +54,14 @@ body {
   z-index: 0;
 }
 
+/* Tracking / interaction panel sits below the map. */
 #hud {
-  flex: 0 0 260px;
+  order: 1;
+  width: 100%;
   overflow-y: auto;
   padding: 16px 18px;
   background: #fff;
-  border-right: 1px solid #e3e7ee;
-}
-
-@media (max-width: 640px) {
-  #layout {
-    flex-direction: column;
-    height: auto;
-  }
-
-  #mapWrap {
-    height: 50vh;
-  }
-
-  #hud {
-    flex: none;
-    width: 100%;
-    border-right: none;
-    border-bottom: 1px solid #e3e7ee;
-  }
+  border-top: 1px solid #e3e7ee;
 }
 
 .status {
