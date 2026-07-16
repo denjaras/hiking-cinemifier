@@ -194,6 +194,8 @@ let selectedTrail = null;
 // --- Proximity audio ---------------------------------------------------------
 const AUDIO_START_DISTANCE_M = 20; // Music starts within this distance
 const AUDIO_FULL_VOLUME_DISTANCE_M = 5; // Full volume within this distance
+const AUDIO_FADE_STEP = 0.05;        // volume decrease per fade tick
+const AUDIO_FADE_INTERVAL_MS = 50;  // ms between fade ticks (~20 steps = ~1 s)
 
 let poiAudios = [];
 let audioUnlocked = false;
@@ -310,26 +312,39 @@ function updatePoiAudio(userLat, userLng) {
       poiAudio.lat,
       poiAudio.lng
     );
-
     const volume = volumeFromDistance(distanceM);
-    poiAudio.audioEl.volume = volume;
 
     if (volume > 0) {
+      // In range: cancel any active fade, set volume directly, ensure playing.
+      if (poiAudio.fadeTimer !== null) {
+        clearInterval(poiAudio.fadeTimer);
+        poiAudio.fadeTimer = null;
+      }
+      poiAudio.audioEl.volume = volume;
       if (poiAudio.audioEl.paused) {
-        poiAudio.audioEl.play().catch(() => {
-          // Autoplay may be blocked until the user clicks Locate me / Start.
-        });
+        poiAudio.audioEl.play().catch(() => {});
       }
-    } else {
-      if (!poiAudio.audioEl.paused) {
-        poiAudio.audioEl.pause();
-      }
+    } else if (poiAudio.fadeTimer === null && !poiAudio.audioEl.paused) {
+      // Out of range and still playing: start a one-shot fade-out.
+      poiAudio.fadeTimer = setInterval(() => {
+        const next = Math.max(0, poiAudio.audioEl.volume - AUDIO_FADE_STEP);
+        poiAudio.audioEl.volume = next;
+        if (next === 0) {
+          poiAudio.audioEl.pause();
+          clearInterval(poiAudio.fadeTimer);
+          poiAudio.fadeTimer = null;
+        }
+      }, AUDIO_FADE_INTERVAL_MS);
     }
   });
 }
 
 function stopAllPoiAudio() {
   poiAudios.forEach((poiAudio) => {
+    if (poiAudio.fadeTimer !== null) {
+      clearInterval(poiAudio.fadeTimer);
+      poiAudio.fadeTimer = null;
+    }
     poiAudio.audioEl.pause();
     poiAudio.audioEl.currentTime = 0;
     poiAudio.audioEl.volume = 0;
@@ -408,6 +423,7 @@ function loadEntry(entry) {
       lng: poi.lng,
       name: poi.name,
       audioEl,
+      fadeTimer: null,
     });
   }
 });
