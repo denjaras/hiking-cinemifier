@@ -19,7 +19,7 @@
   <div id="stage">
     <!-- Update this timestamp on every revision so the deployed version is
          instantly recognizable. -->
-    <h1 id="pageTitle">Live Location Map <small style="font-size:0.5em;font-weight:normal;opacity:0.7;">rev. 2026-07-20 22:34</small></h1>
+    <h1 id="pageTitle">Live Location Map <small style="font-size:0.5em;font-weight:normal;opacity:0.7;">rev. 2026-07-20 23:14</small></h1>
     <div id="layout">
       <div id="hud">
         <div id="status" class="status">Tap "Locate me" to start tracking.</div>
@@ -41,6 +41,17 @@
           <ul id="trailList" class="trail-list">
             <li class="trail-empty">Loading trails…</li>
           </ul>
+        </div>
+
+        <div class="debug-panel">
+          <button id="debugToggle" type="button" class="debug-toggle">Debug ▾</button>
+          <div id="debugBody" class="debug-body" hidden>
+            <div class="debug-row"><span class="debug-label">State</span> <span id="debugState" class="debug-state">—</span></div>
+            <div class="debug-row"><span class="debug-label">Distances</span></div>
+            <ul id="debugDistances" class="debug-distances"></ul>
+            <div class="debug-row"><span class="debug-label">Event log</span></div>
+            <ul id="debugLog" class="debug-log"></ul>
+          </div>
         </div>
       </div>
 

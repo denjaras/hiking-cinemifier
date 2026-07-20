@@ -279,6 +279,92 @@ body {
   background: #d24f08;
 }
 
+/* In-field debug panel (state / distances / event log) */
+.debug-panel {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid #e3e7ee;
+}
+
+.debug-toggle {
+  width: 100%;
+  padding: 8px 10px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #888;
+  background: #f5f7fa;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+}
+
+.debug-toggle:hover {
+  background: #eef1f5;
+}
+
+.debug-body {
+  margin-top: 10px;
+  font-family: "SF Mono", Menlo, monospace;
+  font-size: 11px;
+  color: #333;
+}
+
+.debug-body[hidden] {
+  display: none;
+}
+
+.debug-row {
+  margin: 8px 0 4px;
+}
+
+.debug-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #888;
+}
+
+.debug-state {
+  font-weight: 700;
+  color: #1b2a3d;
+}
+
+.debug-distances,
+.debug-log {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 120px;
+  overflow-y: auto;
+  border: 1px solid #e3e7ee;
+  border-radius: 6px;
+}
+
+.debug-distances li,
+.debug-log li {
+  padding: 4px 8px;
+  border-bottom: 1px solid #f0f0f0;
+}
+
+.debug-distances li:last-child,
+.debug-log li:last-child {
+  border-bottom: none;
+}
+
+.debug-distances li.debug-current {
+  background: #fff1e8;
+  color: #b8420a;
+  font-weight: 600;
+}
+
+.debug-log-time {
+  color: #999;
+  margin-right: 6px;
+}
+
 /* Pulsing accuracy marker tweak */
 .leaflet-marker-icon.pulse {
   filter: drop-shadow(0 0 6px rgba(45, 127, 249, 0.8));

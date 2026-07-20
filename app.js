@@ -29,6 +29,17 @@ const lngEl = document.getElementById("lng");
 const accEl = document.getElementById("acc");
 const speedEl = document.getElementById("speed");
 const headingEl = document.getElementById("heading");
+const debugToggleBtn = document.getElementById("debugToggle");
+const debugBodyEl = document.getElementById("debugBody");
+const debugStateEl = document.getElementById("debugState");
+const debugDistancesEl = document.getElementById("debugDistances");
+const debugLogEl = document.getElementById("debugLog");
+
+debugToggleBtn.addEventListener("click", () => {
+  const wasHidden = debugBodyEl.hidden;
+  debugBodyEl.hidden = !wasHidden;
+  debugToggleBtn.textContent = wasHidden ? "Debug ▴" : "Debug ▾";
+});
 
 // --- State -------------------------------------------------------------------
 let watchId = null;
@@ -89,6 +100,7 @@ function onPosition(pos) {
   setStatus("Tracking live position…");
   updateReadout(pos.coords);
   updatePoiAudio(latitude, longitude);
+  renderDebugDistances(latitude, longitude);
 
   if (!marker) {
     marker = L.marker(latlng, { icon: dotIcon }).addTo(map);
@@ -208,6 +220,42 @@ let poiAudios = [];
 let audioUnlocked = false;
 let currentPoi = null; // POI we are currently considered "inside" of
 let outroPoi = null;   // POI whose track is finishing after we left its zone
+
+// --- Debug panel (in-field HUD, no console needed) ---------------------------
+const DEBUG_LOG_MAX = 30;
+
+function logDebugEvent(message) {
+  const time = new Date().toLocaleTimeString([], { hour12: false });
+  const li = document.createElement("li");
+  li.innerHTML = `<span class="debug-log-time">${time}</span>${message}`;
+  debugLogEl.prepend(li);
+  while (debugLogEl.children.length > DEBUG_LOG_MAX) {
+    debugLogEl.removeChild(debugLogEl.lastChild);
+  }
+}
+
+function renderDebugState() {
+  if (currentPoi) {
+    debugStateEl.textContent = `INSIDE — ${currentPoi.name}`;
+  } else if (outroPoi) {
+    debugStateEl.textContent = `OUTRO — ${outroPoi.name}`;
+  } else {
+    debugStateEl.textContent = "SILENT";
+  }
+}
+
+function renderDebugDistances(userLat, userLng) {
+  debugDistancesEl.innerHTML = "";
+  poiAudios.forEach((poiAudio) => {
+    const d = distanceToPoi(userLat, userLng, poiAudio);
+    const li = document.createElement("li");
+    li.textContent = `${poiAudio.name}: ${d.toFixed(1)} m`;
+    if (poiAudio === currentPoi || poiAudio === outroPoi) {
+      li.classList.add("debug-current");
+    }
+    debugDistancesEl.appendChild(li);
+  });
+}
 
 // --- Preload: fetch every POI's audio fully before the hike starts, so
 // playback afterwards comes from an in-memory Blob (and, where supported, a
@@ -437,14 +485,18 @@ function updatePoiAudio(userLat, userLng) {
     outroPoi = null;
     currentPoi = nearest;
     playPoiAudioOnce(currentPoi);
+    logDebugEvent(`ENTER ${currentPoi.name} (${nearestDist.toFixed(1)}m)`);
+    renderDebugState();
     return;
   }
 
   if (!nearest && currentPoi) {
     // Left every area with nothing new to enter: let the current track keep
     // playing to its natural end (no cut, no restart), then go silent.
+    logDebugEvent(`EXIT ${currentPoi.name} → OUTRO`);
     outroPoi = currentPoi;
     currentPoi = null;
+    renderDebugState();
   }
 }
 
@@ -452,6 +504,7 @@ function stopAllPoiAudio() {
   poiAudios.forEach((poiAudio) => stopPoiAudioHard(poiAudio));
   currentPoi = null;
   outroPoi = null;
+  renderDebugState();
 }
 
 // Great-circle distance (km) summed along a coordinate path.
@@ -525,11 +578,23 @@ function loadEntry(entry) {
     audioEl.preload = "auto";
     audioEl.volume = 0;
 
-    poiAudios.push({
+    const poiAudioEntry = {
       lat: poi.lat,
       lng: poi.lng,
       name: poi.name,
       audioEl,
+    };
+    poiAudios.push(poiAudioEntry);
+
+    // Once an outro track finishes on its own, the state is truly silent —
+    // clear the pointer so the debug panel reflects that instead of showing
+    // a stale "OUTRO" for a track that has already stopped.
+    audioEl.addEventListener("ended", () => {
+      if (outroPoi === poiAudioEntry) {
+        outroPoi = null;
+        logDebugEvent(`Track ended: ${poiAudioEntry.name} → SILENT`);
+        renderDebugState();
+      }
     });
   }
 });
@@ -582,6 +647,7 @@ async function loadTrails() {
   map.fitBounds(group.getBounds(), { padding: [30, 30] });
 
   setStatus('Audio ready. Tap "Locate me" to start tracking.');
+  renderDebugState();
 }
 
 loadTrails();
