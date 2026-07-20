@@ -43,6 +43,7 @@ debugToggleBtn.addEventListener("click", () => {
 
 // --- State -------------------------------------------------------------------
 let watchId = null;
+let wakeLock = null;   // keeps the screen on while tracking, if the browser supports it
 let marker = null;      // position dot
 let accuracyCircle = null; // accuracy radius
 let autoRecenter = true; // follow the user like GPS until they pan away
@@ -129,6 +130,37 @@ function onError(err) {
   setStatus(messages[err.code] || `Location error: ${err.message}`, true);
 }
 
+// --- Screen wake lock ---------------------------------------------------------
+// Hikers need the screen on for the trigger to work at all — mobile browsers
+// suspend GPS updates and audio quickly once the screen sleeps.
+async function requestWakeLock() {
+  if (!("wakeLock" in navigator)) return;
+  try {
+    wakeLock = await navigator.wakeLock.request("screen");
+    wakeLock.addEventListener("release", () => {
+      wakeLock = null;
+    });
+  } catch (err) {
+    // Blocked (low battery, backgrounded tab, etc.) — non-fatal, tracking still works.
+    console.error("Wake lock request failed:", err);
+  }
+}
+
+function releaseWakeLock() {
+  if (wakeLock) {
+    wakeLock.release();
+    wakeLock = null;
+  }
+}
+
+// The OS/browser force-releases the lock whenever the tab is hidden (e.g. the
+// hiker glances at another app); re-acquire it once tracking is visible again.
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && watchId !== null && !wakeLock) {
+    requestWakeLock();
+  }
+});
+
 // --- Tracking control --------------------------------------------------------
 function startTracking() {
   unlockPoiAudio();
@@ -140,6 +172,7 @@ function startTracking() {
   setStatus("Requesting location permission…");
   startBtn.hidden = true;
   stopBtn.hidden = false;
+  requestWakeLock();
 
   // watchPosition gives continuous, GPS-like updates.
   watchId = navigator.geolocation.watchPosition(onPosition, onError, {
@@ -165,6 +198,7 @@ function stopTracking() {
   autoRecenter = true;
   updateReadout({});
   stopAllPoiAudio();
+  releaseWakeLock();
   setStatus('Tracking stopped. Tap "Locate me" to start again.');
   stopBtn.hidden = true;
   startBtn.hidden = false;
@@ -208,8 +242,8 @@ let selectedTrail = null;
 // explicitly (entered / staying / left) instead of re-derived from raw
 // distance on every GPS tick, so GPS jitter can't cause repeat-triggering
 // or overlapping tracks.
-const AUDIO_ENTER_RADIUS_M = 35; // must be at least this close to trigger entry
-const AUDIO_EXIT_RADIUS_M = 50;  // must move at least this far to count as "left"
+const AUDIO_ENTER_RADIUS_M = 20; // must be at least this close to trigger entry
+const AUDIO_EXIT_RADIUS_M = 35;  // must move at least this far to count as "left"
 // The gap between enter/exit radii is a hysteresis buffer: phone GPS commonly
 // drifts 10-20m in the mountains, so a single radius would flicker in/out
 // right at the boundary and re-trigger the same track over and over.
