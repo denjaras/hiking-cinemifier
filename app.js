@@ -208,8 +208,8 @@ let selectedTrail = null;
 // explicitly (entered / staying / left) instead of re-derived from raw
 // distance on every GPS tick, so GPS jitter can't cause repeat-triggering
 // or overlapping tracks.
-const AUDIO_ENTER_RADIUS_M = 20; // must be at least this close to trigger entry
-const AUDIO_EXIT_RADIUS_M = 35;  // must move at least this far to count as "left"
+const AUDIO_ENTER_RADIUS_M = 35; // must be at least this close to trigger entry
+const AUDIO_EXIT_RADIUS_M = 50;  // must move at least this far to count as "left"
 // The gap between enter/exit radii is a hysteresis buffer: phone GPS commonly
 // drifts 10-20m in the mountains, so a single radius would flicker in/out
 // right at the boundary and re-trigger the same track over and over.
