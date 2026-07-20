@@ -191,14 +191,96 @@ const TRAIL_STYLE_SELECTED = { color: "#e8590c", weight: 6, opacity: 1 };
 let trails = [];          // { name, layer, listItem }
 let selectedTrail = null;
 
-// --- Proximity audio ---------------------------------------------------------
-const AUDIO_START_DISTANCE_M = 20; // Music starts within this distance
-const AUDIO_FULL_VOLUME_DISTANCE_M = 5; // Full volume within this distance
-const AUDIO_FADE_STEP = 0.05;        // volume decrease per fade tick
-const AUDIO_FADE_INTERVAL_MS = 50;  // ms between fade ticks (~20 steps = ~1 s)
+// --- Proximity audio (state-machine driven) ----------------------------------
+// Exactly one POI's track plays at a time. Zone membership is tracked
+// explicitly (entered / staying / left) instead of re-derived from raw
+// distance on every GPS tick, so GPS jitter can't cause repeat-triggering
+// or overlapping tracks.
+const AUDIO_ENTER_RADIUS_M = 20; // must be at least this close to trigger entry
+const AUDIO_EXIT_RADIUS_M = 35;  // must move at least this far to count as "left"
+// The gap between enter/exit radii is a hysteresis buffer: phone GPS commonly
+// drifts 10-20m in the mountains, so a single radius would flicker in/out
+// right at the boundary and re-trigger the same track over and over.
+
+const AUDIO_CACHE_NAME = "poi-audio-cache-v1";
 
 let poiAudios = [];
 let audioUnlocked = false;
+let currentPoi = null; // POI we are currently considered "inside" of
+let outroPoi = null;   // POI whose track is finishing after we left its zone
+
+// --- Preload: fetch every POI's audio fully before the hike starts, so
+// playback afterwards comes from an in-memory Blob (and, where supported, a
+// Cache Storage entry) and is immune to spotty signal out on the trail.
+const audioBlobCache = new Map(); // original path -> blob: object URL (or null on failure)
+
+async function cacheStorageGet(url) {
+  if (!("caches" in window)) return null;
+  try {
+    const cache = await caches.open(AUDIO_CACHE_NAME);
+    const cached = await cache.match(url);
+    return cached ? await cached.blob() : null;
+  } catch (_) {
+    return null; // Cache Storage unavailable (file://, private mode, etc.)
+  }
+}
+
+async function cacheStoragePut(url, blob) {
+  if (!("caches" in window)) return;
+  try {
+    const cache = await caches.open(AUDIO_CACHE_NAME);
+    await cache.put(
+      url,
+      new Response(blob, { headers: { "Content-Type": blob.type || "audio/mpeg" } })
+    );
+  } catch (_) {
+    // Non-fatal — preload still works via the in-memory blob for this session.
+  }
+}
+
+// Resolve one audio path to a fully-downloaded blob: URL, reusing a prior
+// Cache Storage copy if we have one so re-visits don't need the network at all.
+async function preloadAudioFile(url) {
+  if (audioBlobCache.has(url)) return audioBlobCache.get(url);
+
+  const cachedBlob = await cacheStorageGet(url);
+  if (cachedBlob) {
+    const objectUrl = URL.createObjectURL(cachedBlob);
+    audioBlobCache.set(url, objectUrl);
+    return objectUrl;
+  }
+
+  try {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const blob = await response.blob();
+    const objectUrl = URL.createObjectURL(blob);
+    audioBlobCache.set(url, objectUrl);
+    cacheStoragePut(url, blob); // fire-and-forget
+    return objectUrl;
+  } catch (err) {
+    console.error(`Audio preload failed for "${url}":`, err);
+    audioBlobCache.set(url, null); // remember the failure; caller falls back to streaming
+    return null;
+  }
+}
+
+// Preload every distinct audio file, reporting progress via setStatus().
+async function preloadAllPoiAudio(urls) {
+  const unique = Array.from(new Set(urls));
+  if (!unique.length) return;
+
+  let done = 0;
+  setStatus(`Preparing offline audio… (0/${unique.length})`);
+  await Promise.all(
+    unique.map((url) =>
+      preloadAudioFile(url).finally(() => {
+        done++;
+        setStatus(`Preparing offline audio… (${done}/${unique.length})`);
+      })
+    )
+  );
+}
 
 // Parse a GPX document into an array of { name, coords:[[lat,lng],...] } tracks.
 function parseGpx(xmlText) {
@@ -272,14 +354,22 @@ function distanceMeters(lat1, lng1, lat2, lng2) {
   return 2 * R * Math.asin(Math.sqrt(a));
 }
 
-function volumeFromDistance(distanceM) {
-  if (distanceM >= AUDIO_START_DISTANCE_M) return 0;
-  if (distanceM <= AUDIO_FULL_VOLUME_DISTANCE_M) return 1;
+function distanceToPoi(userLat, userLng, poiAudio) {
+  return distanceMeters(userLat, userLng, poiAudio.lat, poiAudio.lng);
+}
 
-  const range = AUDIO_START_DISTANCE_M - AUDIO_FULL_VOLUME_DISTANCE_M;
-  const closeness = (AUDIO_START_DISTANCE_M - distanceM) / range;
+function stopPoiAudioHard(poiAudio) {
+  if (!poiAudio) return;
+  poiAudio.audioEl.pause();
+  poiAudio.audioEl.currentTime = 0;
+}
 
-  return Math.max(0, Math.min(1, closeness));
+function playPoiAudioOnce(poiAudio) {
+  poiAudio.audioEl.volume = 1;
+  poiAudio.audioEl.currentTime = 0;
+  poiAudio.audioEl.play().catch(() => {
+    // Autoplay may still be blocked until a user gesture unlocks it.
+  });
 }
 
 function unlockPoiAudio() {
@@ -304,51 +394,64 @@ function unlockPoiAudio() {
   audioUnlocked = true;
 }
 
+// Core state-transition logic. Called on every GPS fix, but only *acts* on
+// enter/leave transitions — staying inside or outside an area is a no-op.
+//
+//   OUTSIDE -> INSIDE (enter): stop whatever was playing, play the new
+//                              spot's track once, from the start.
+//   INSIDE  -> INSIDE (stay):  do nothing, even if the track already
+//                              finished playing (no looping).
+//   INSIDE  -> OUTSIDE (exit): let the current track finish on its own,
+//                              then go silent until the next entry.
 function updatePoiAudio(userLat, userLng) {
-  poiAudios.forEach((poiAudio) => {
-    const distanceM = distanceMeters(
-      userLat,
-      userLng,
-      poiAudio.lat,
-      poiAudio.lng
-    );
-    const volume = volumeFromDistance(distanceM);
+  // 1) Are we still inside the POI we were last considered "inside" of?
+  //    Uses the wider exit radius so GPS noise near the boundary doesn't
+  //    flip us in and out repeatedly.
+  let stillInsideCurrent = false;
+  if (currentPoi) {
+    stillInsideCurrent = distanceToPoi(userLat, userLng, currentPoi) <= AUDIO_EXIT_RADIUS_M;
+  }
 
-    if (volume > 0) {
-      // In range: cancel any active fade, set volume directly, ensure playing.
-      if (poiAudio.fadeTimer !== null) {
-        clearInterval(poiAudio.fadeTimer);
-        poiAudio.fadeTimer = null;
-      }
-      poiAudio.audioEl.volume = volume;
-      if (poiAudio.audioEl.paused) {
-        poiAudio.audioEl.play().catch(() => {});
-      }
-    } else if (poiAudio.fadeTimer === null && !poiAudio.audioEl.paused) {
-      // Out of range and still playing: start a one-shot fade-out.
-      poiAudio.fadeTimer = setInterval(() => {
-        const next = Math.max(0, poiAudio.audioEl.volume - AUDIO_FADE_STEP);
-        poiAudio.audioEl.volume = next;
-        if (next === 0) {
-          poiAudio.audioEl.pause();
-          clearInterval(poiAudio.fadeTimer);
-          poiAudio.fadeTimer = null;
-        }
-      }, AUDIO_FADE_INTERVAL_MS);
+  if (stillInsideCurrent) {
+    // Staying in the same area: never retrigger.
+    return;
+  }
+
+  // 2) We've left currentPoi's zone (or had none). Find the closest POI
+  //    we're newly within entry range of.
+  let nearest = null;
+  let nearestDist = Infinity;
+  poiAudios.forEach((poiAudio) => {
+    const d = distanceToPoi(userLat, userLng, poiAudio);
+    if (d <= AUDIO_ENTER_RADIUS_M && d < nearestDist) {
+      nearest = poiAudio;
+      nearestDist = d;
     }
   });
+
+  if (nearest && nearest !== currentPoi) {
+    // Entering a (different) area: cut off anything still playing —
+    // whichever spot it belonged to — then trigger this spot's track once.
+    stopPoiAudioHard(currentPoi);
+    stopPoiAudioHard(outroPoi);
+    outroPoi = null;
+    currentPoi = nearest;
+    playPoiAudioOnce(currentPoi);
+    return;
+  }
+
+  if (!nearest && currentPoi) {
+    // Left every area with nothing new to enter: let the current track keep
+    // playing to its natural end (no cut, no restart), then go silent.
+    outroPoi = currentPoi;
+    currentPoi = null;
+  }
 }
 
 function stopAllPoiAudio() {
-  poiAudios.forEach((poiAudio) => {
-    if (poiAudio.fadeTimer !== null) {
-      clearInterval(poiAudio.fadeTimer);
-      poiAudio.fadeTimer = null;
-    }
-    poiAudio.audioEl.pause();
-    poiAudio.audioEl.currentTime = 0;
-    poiAudio.audioEl.volume = 0;
-  });
+  poiAudios.forEach((poiAudio) => stopPoiAudioHard(poiAudio));
+  currentPoi = null;
+  outroPoi = null;
 }
 
 // Great-circle distance (km) summed along a coordinate path.
@@ -413,8 +516,12 @@ function loadEntry(entry) {
     .bindPopup(poi.name);
 
   if (poi.audio) {
-    const audioEl = new Audio(poi.audio);
-    audioEl.loop = true;
+    // Use the fully-preloaded blob: URL when we have one (offline-safe);
+    // fall back to the original path (streamed) if preloading failed.
+    const src = audioBlobCache.get(poi.audio) || poi.audio;
+    const audioEl = new Audio(src);
+    audioEl.loop = false; // single-shot; updatePoiAudio()'s state machine
+                          // decides if/when it plays again
     audioEl.preload = "auto";
     audioEl.volume = 0;
 
@@ -423,7 +530,6 @@ function loadEntry(entry) {
       lng: poi.lng,
       name: poi.name,
       audioEl,
-      fadeTimer: null,
     });
   }
 });
@@ -431,13 +537,30 @@ function loadEntry(entry) {
 
 // Read trail data embedded via the trails/*.gpx.js scripts. This loads straight
 // from the repo and works over file:// (no fetch / web server needed).
-function loadTrails() {
+async function loadTrails() {
   const entries = window.TRAIL_DATA || [];
 
   trailListEl.innerHTML = "";
   if (!entries.length) {
     trailListEl.innerHTML = '<li class="trail-empty">No trails listed.</li>';
     return;
+  }
+
+  // Preload every POI's audio file fully before wiring anything up, so the
+  // whole soundscape is already in memory (and, where supported, in Cache
+  // Storage) by the time the hiker sets off with no signal.
+  const audioUrls = [];
+  entries.forEach((entry) =>
+    (entry.pois || []).forEach((poi) => {
+      if (poi.audio) audioUrls.push(poi.audio);
+    })
+  );
+
+  startBtn.disabled = true;
+  try {
+    await preloadAllPoiAudio(audioUrls);
+  } finally {
+    startBtn.disabled = false;
   }
 
   // A single bad entry shouldn't hide the rest.
@@ -457,6 +580,8 @@ function loadTrails() {
   // Frame all loaded trails so they're visible right away.
   const group = L.featureGroup(trails.map((t) => t.layer));
   map.fitBounds(group.getBounds(), { padding: [30, 30] });
+
+  setStatus('Audio ready. Tap "Locate me" to start tracking.');
 }
 
 loadTrails();
