@@ -1,66 +1,50 @@
 # 引き継ぎ書 — hiking-cinemifier 音声トリガー修正
 
-作成: 2026-07-20 / 前セッション: Cowork（ローカル）→ 次: Claude Code（リモート）
+最終更新: 2026-07-21 21:19（Cowork ローカルセッション）→ 次: MBPで作業
 
 ## プロジェクト概要
 
-ハイキング中にGPS位置をトリガーに、特定スポット（半径20m）に入ると対応する曲が流れるWebアプリ（素のHTML/JS + Leaflet、ビルドなし）。山中でのフィールド実験に使う。**明日、別グループで実験があるため今日中に動く状態にする必要がある。**
+ハイキング中にGPS位置をトリガーに、特定スポットに入ると対応する曲が流れるWebアプリ（素のHTML/JS + Leaflet、ビルドなし）。山中でのフィールド実験用。
 
 - リポジトリ（作業用・公開）: https://github.com/denjaras/hiking-cinemifier
 - 元リポジトリ（他人作、権限なし）: https://github.com/WMaranda/nature-music-tracker
 - 公開URL（GitHub Pages, main/(root)から自動デプロイ）: https://denjaras.github.io/hiking-cinemifier/
-- ローカルクローン: `~/KuraClaude/nature-music-tracker`（remote `myfork` = hiking-cinemifier）
 
-## Git状態（2026-07-20 22:40時点）
+## MBPでの始め方
 
-- GitHub `main` = `20ab607`（状態遷移修正＋テスト地点、**デプロイ済み**）
-- ローカルのみ = `d961853`（タイトルに改訂時刻表示を追加、**未push**）
-- **最初にやること: ローカルMacから `git push myfork main` するか、リモート側で同等の変更（下記「改訂時刻」参照）を再実装する。**
+```bash
+git clone https://github.com/denjaras/hiking-cinemifier.git
+cd hiking-cinemifier
+# Claude Codeを開いて「HANDOVER.mdを読んで」から始める
+```
 
-## 元コードのバグ（修正済みのはず）
+※ このコミットがGitHubにpushされていることが前提。未pushならMBA側から `git push myfork main`。
 
-1. エリア離脱後も同じ曲が無限リピート（`audioEl.loop = true` ＋ 距離のみの毎回判定が原因）
-2. 新エリア到達時に前の曲が止まらず重なる（POIごとに独立判定で「今何が鳴ってるか」を誰も管理していなかった）
+## 完了済み
 
-## 実装した仕様（app.js）
+1. **状態遷移による音声制御**（app.js）: `currentPoi`/`outroPoi`で管理。
+   進入=前の曲を即停止して新しい曲を頭から1回再生（loop無し）／滞在=何もしない（曲が終わってもリピートしない）／退出=曲は最後まで流し切って無音へ。曲終了時に`ended`リスナーでOUTRO→SILENTへ遷移。
+2. **ヒステリシス**: 進入30m / 退出45m（`AUDIO_ENTER_RADIUS_M` / `AUDIO_EXIT_RADIUS_M`）。GPSブレによる再トリガー防止。
+3. **全曲プリロード**: 起動時にfetch→Blob化＋Cache Storage保存。オフライン再生対応。完了までLocate meボタン無効。
+4. **画面内デバッグパネル**: 状態（INSIDE/OUTRO/SILENT）、各POIまでの距離、進入/退出/曲終了のイベントログ。スマホだけで実地デバッグ可能。
+5. **Screen Wake Lock**: トラッキング中は画面が自動消灯しない（対応ブラウザ）。タブ復帰時に再取得。
+6. **改訂時刻表示**: `index.html`の`<h1>`内に`rev. YYYY-MM-DD HH:MM`。**push前に毎回手動更新すること**（新旧デプロイの判別用）。
+7. **本番ルートの曲重複を解消**: 歩行順2・3番目のScenic vista 2箇所が両方Lion Kingだったのを、3番目（48.2649164, 16.3643214）を未使用だったIndiana Jones (Raiders March) に変更。現在の割り当て:
+   - Wine bar → La La Land
+   - Scenic vista (48.26516, 16.36153) → Lion King
+   - Scenic vista (48.26492, 16.36432) → Indiana Jones
+   - Town architecture → Interstellar
+8. **テスト用POI（TEST 1-3, Westbahnhof）を削除**: `trails/test-westbahnhof.gpx.js`とindex.htmlのscriptタグを除去済み。
 
-状態遷移ベースに全面書き換え。キー変数: `currentPoi`（今いるエリア）、`outroPoi`（退出後に流し切り中の曲）。
+## 未確認・残タスク
 
-- **進入（外→内）**: 前の曲を即停止し、新しい曲を頭から1回だけ再生（loop=false）
-- **滞在（内→内）**: 何もしない。曲が終わってもリピートしない
-- **退出（内→外）**: 曲は打ち切らず最後まで流す。終わったら次の進入まで無音
-- **GPSブレ対策**: 進入判定20m / 退出判定35mのヒステリシス（`AUDIO_ENTER_RADIUS_M` / `AUDIO_EXIT_RADIUS_M`）
-- **音量**: 常に100%固定。距離連動音量・フェードは廃止（実験仕様）
-- **プリロード**: 起動時に全曲をfetch→Blob化して`blob:` URLで再生（オフライン対応）。Cache Storage APIにも保存。失敗時は元URLのストリーミングにフォールバック。プリロード完了まで「Locate me」ボタン無効、ステータスに進捗表示
+1. **実機での実地確認**: 状態遷移・プリロード・Wake LockはコードレビューとローカルシミュレーションのみでiPhone実機未検証。特にiOS Safariの自動再生制限（`unlockPoiAudio()`がタップ時に走る設計）。
+2. ユーザーが実地テストで見つけた問題があれば、デバッグパネルのログ（rev時刻付きスクショ）で切り分けてから修正。
 
-主な関数: `updatePoiAudio()`（状態遷移本体）、`preloadAllPoiAudio()` / `preloadAudioFile()`、`playPoiAudioOnce()`、`stopPoiAudioHard()`
+## 制約・注意点
 
-検証済み: 状態遷移ロジックをモックAudioで単体シミュレーション（ジッターで再トリガーなし／曲終了後リピートなし／退出時流しっぱなし／新エリア進入で前曲即停止）。**実機・実地テストは未実施。**
-
-## テスト地点（追加済み: trails/test-westbahnhof.gpx.js）
-
-西駅近く、ユーザーの自宅圏。2点間約225m。
-
-| 地点 | 座標 | 曲 |
-|---|---|---|
-| TEST 1: Maria vom Siege | 48.1931875, 16.3378125 | Lion King - This Land |
-| TEST 2: Alaturka Mahü | 48.1951875, 16.3373125 | La La Land - Credits |
-
-`index.html` に `<script src="trails/test-westbahnhof.gpx.js">` を追加済み。本番前にこのファイルとscriptタグを消せば元に戻る。
-
-## 改訂時刻の表示（ローカル未pushのd961853）
-
-デプロイ版が新旧どちらかすぐ判別できるよう、`index.html` の `<h1 id="pageTitle">` 内に `<small>rev. YYYY-MM-DD HH:MM</small>` を表示する運用。**以後、変更をpushするたびにこの時刻を手動更新すること。**
-
-## 未着手・次のタスク
-
-1. **画面内デバッグパネル**（着手直前で中断）: 現地でスマホだけでデバッグできるよう、HUDに「現在の状態（INSIDE/OUTRO/SILENT）」「各POIまでの距離」「進入/退出/曲終了イベントの時刻付きログ」を表示するパネルを追加する。コンソールが見られない実地での問題切り分けが目的。
-2. **実地テストで報告された問題の修正**: ユーザーは今日のテストで問題を確認しているが、それは旧コード（20ab607反映前）の可能性が高い。新版での症状を画面のrev時刻と合わせて確認してから直すこと。
-3. iOSのSafari/Chrome実機での自動再生制限の挙動確認（`unlockPoiAudio()`がボタンタップ時に走る設計だが実機未確認）
-
-## 注意点
-
-- 音声ファイル名にスペースを含む（`audio/01. Lion King - This Land.mp3`等）。URLエンコード注意
-- GPS（Geolocation API）はHTTPS必須 → GitHub Pagesは満たす
-- `nussberg-nussdorf.gpx.js` 内にコメントアウトされた旧テスト地点あり（触らない）
-- 実験本番のPOIは4点（うち2点は同じ曲を共有）
+- **画面ロック中/バックグラウンドでは動かない**（Web/PWAの限界。GPS監視が止まる）。運用は「画面点灯＋ブラウザ前面」。Wake Lockで自動消灯だけは防止済み。
+- 音声ファイル名にスペースあり。URLエンコード注意。
+- Geolocation APIはHTTPS必須（GitHub Pagesは満たす）。
+- `nussberg-nussdorf.gpx.js`内にコメントアウトの旧テスト地点1行あり（触らない）。
+- デプロイ確認は公開URLのタイトル横のrev時刻で判別。push後1〜2分でPages再ビルド。
